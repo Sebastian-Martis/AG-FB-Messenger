@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Błąd połączenia - AG Messenger</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .error-container {
+            text-align: center;
+            max-width: 500px;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.05);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+        }
+        
+        .error-icon {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 24px;
+            background: rgba(255, 100, 100, 0.2);
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 40px;
+        }
+        
+        h1 {
+            font-size: 28px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #ffffff;
+        }
+        
+        p {
+            font-size: 16px;
+            line-height: 1.6;
+            color: rgba(255, 255, 255, 0.7);
+            margin-bottom: 12px;
+        }
+        
+        .instructions {
+            margin-top: 24px;
+            padding: 20px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            text-align: left;
+        }
+        
+        .instructions h3 {
+            font-size: 14px;
+            font-weight: 600;
+            color: rgba(255, 255, 255, 0.9);
+            margin-bottom: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .instructions ul {
+            list-style: none;
+            padding: 0;
+        }
+        
+        .instructions li {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.7);
+            padding: 8px 0;
+            padding-left: 24px;
+            position: relative;
+        }
+        
+        .instructions li::before {
+            content: '→';
+            position: absolute;
+            left: 0;
+            color: #00d4ff;
+        }
+        
+        .retry-btn {
+            display: inline-block;
+            margin-top: 24px;
+            padding: 14px 32px;
+            background: linear-gradient(135deg, #0066ff 0%, #00d4ff 100%);
+            color: white;
+            text-decoration: none;
+            border-radius: 30px;
+            font-weight: 600;
+            font-size: 16px;
+            border: none;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        
+        .retry-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 20px rgba(0, 102, 255, 0.4);
+        }
+        
+        .retry-btn:active {
+            transform: translateY(0);
+        }
+        
+        .shortcut {
+            display: inline-block;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 13px;
+            margin: 0 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="error-container">
+        <div class="error-icon">📡</div>
+        <h1>Brak połączenia</h1>
+        <p>Nie można połączyć się z Messengerem.</p>
+        <p>Sprawdź swoje połączenie internetowe i spróbuj ponownie.</p>
+        
+        <div class="instructions">
+            <h3>Co możesz zrobić:</h3>
+            <ul>
+                <li>Sprawdź czy masz aktywne połączenie z internetem</li>
+                <li>Sprawdź czy messenger.com działa w przeglądarce</li>
+                <li>Naciśnij <span class="shortcut">Ctrl+R</span> aby odświeżyć</li>
+                <li>Zrestartuj aplikację jeśli problem się utrzymuje</li>
+            </ul>
+        </div>
+        
+        <button class="retry-btn" onclick="location.href='https://www.messenger.com/'">
+            Spróbuj ponownie
+        </button>
+    </div>
+</body>
+</html>
