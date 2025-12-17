@@ -1,6 +1,5 @@
 const { app, shell, dialog, Menu } = require('electron');
 const path = require('path');
-const { autoUpdater } = require('electron-updater');
 
 function createMenu(mainWindow, usageTracker) {
     const menuTemplate = [
@@ -13,7 +12,7 @@ function createMenu(mainWindow, usageTracker) {
                         dialog.showMessageBox(mainWindow, {
                             type: 'info',
                             title: 'O programie',
-                            message: 'FB-Messenger-JaRoD\n\nWersja: ' + app.getVersion() + '\nCreated by JaRoD-CENTER',
+                            message: 'J-Connect Enterprise\n\nWersja: ' + app.getVersion() + '\nCreated by JaRoD-CENTER',
                             icon: path.join(__dirname, 'assets', 'icon.png')
                         });
                     }
@@ -33,7 +32,7 @@ function createMenu(mainWindow, usageTracker) {
                 {
                     label: '💬 Wyślij opinię / Zgłoś błąd',
                     click: () => {
-                        shell.openExternal('mailto:biuro@jarod-center.com?subject=FB-Messenger-JaRoD%20Feedback');
+                        shell.openExternal('mailto:biuro@jarod-center.com?subject=J-Connect%20Enterprise%20Feedback');
                     }
                 },
                 { type: 'separator' },
@@ -52,14 +51,14 @@ function createMenu(mainWindow, usageTracker) {
             label: 'Widok',
             submenu: [
                 {
-                    label: 'Odśwież / Wróć do Messenger',
+                    label: 'Odśwież',
                     accelerator: 'CmdOrCtrl+R',
-                    click: () => { if (mainWindow) mainWindow.loadURL('https://www.messenger.com/'); }
+                    click: () => { if (mainWindow) mainWindow.webContents.reload(); }
                 },
                 {
                     label: 'Odśwież (F5)',
                     accelerator: 'F5',
-                    click: () => { if (mainWindow) mainWindow.loadURL('https://www.messenger.com/'); }
+                    click: () => { if (mainWindow) mainWindow.webContents.reload(); }
                 },
                 { type: 'separator' },
                 {
@@ -76,3 +75,4 @@ function createMenu(mainWindow, usageTracker) {
 }
 
 module.exports = { createMenu };
+

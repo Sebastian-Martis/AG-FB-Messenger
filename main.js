@@ -4,6 +4,7 @@
 
 const { app, BrowserWindow, shell, Tray, Menu, nativeImage, globalShortcut, Notification, session, dialog } = require('electron');
 const path = require('path');
+const fs = require('fs');
 const UsageTracker = require('./usage-tracker');
 const { autoUpdater } = require('electron-updater');
 
@@ -27,7 +28,7 @@ const CONFIG = {
     MESSENGER_URL: 'https://www.messenger.com/',
 
     // User-Agent (symulacja prawdziwego Chrome)
-    USER_AGENT: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    USER_AGENT: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
 
     // Domeny dozwolone do otwierania w aplikacji
     ALLOWED_DOMAINS: ['messenger.com', 'facebook.com', 'fbcdn.net', 'google.com', 'facebook.net'],
@@ -80,7 +81,6 @@ let usageTracker = null;
 function createTrayIcon() {
     // Jeśli mamy własną ikonę, użyj jej
     try {
-        const fs = require('fs');
         if (fs.existsSync(CONFIG.ICON_PATH)) {
             return nativeImage.createFromPath(CONFIG.ICON_PATH);
         }
@@ -141,7 +141,7 @@ function createTray() {
             }
         ]);
 
-        tray.setToolTip('AG Messenger');
+        tray.setToolTip('J-Connect Enterprise');
         tray.setContextMenu(contextMenu);
 
         // Kliknięcie na ikonę w zasobniku pokazuje okno
@@ -202,20 +202,6 @@ function createWindow() {
     const { createMenu } = require('./menu');
     createMenu(mainWindow, usageTracker);
 
-    // Jeśli było zmaksymalizowane, zmaksymalizuj
-    // if (isMaximized) {
-    //     mainWindow.maximize();
-    // }
-
-    // Pokaż okno gdy jest gotowe
-    // mainWindow.once('ready-to-show', () => {
-    //     mainWindow.show();
-    // });
-
-    // Załaduj Messenger
-    // mainWindow.webContents.setUserAgent(CONFIG.USER_AGENT);
-    // mainWindow.loadURL(CONFIG.MESSENGER_URL);
-
     // ===============================================
     // LOGIKA SPLASH SCREEN
     // ===============================================
@@ -245,20 +231,27 @@ function createWindow() {
     }, splashDuration);
 
     // ===========================================================================
-    // Obsługa zapisywania stanu okna
+    // Obsługa zapisywania stanu okna (z debounce dla optymalizacji)
     // ===========================================================================
 
+    let saveWindowStateTimeout = null;
     function saveWindowState() {
         if (!store || !mainWindow) return;
 
-        const isMax = mainWindow.isMaximized();
-        store.set('isMaximized', isMax);
-
-        // Zapisz wymiary tylko jeśli okno nie jest zmaksymalizowane
-        if (!isMax) {
-            const bounds = mainWindow.getBounds();
-            store.set('windowBounds', bounds);
+        // Debounce - zapisz dopiero po 500ms bez zmian
+        if (saveWindowStateTimeout) {
+            clearTimeout(saveWindowStateTimeout);
         }
+        saveWindowStateTimeout = setTimeout(() => {
+            const isMax = mainWindow.isMaximized();
+            store.set('isMaximized', isMax);
+
+            // Zapisz wymiary tylko jeśli okno nie jest zmaksymalizowane
+            if (!isMax) {
+                const bounds = mainWindow.getBounds();
+                store.set('windowBounds', bounds);
+            }
+        }, 500);
     }
 
     mainWindow.on('resize', saveWindowState);
@@ -277,7 +270,7 @@ function createWindow() {
             // Pokaż powiadomienie o zminimalizowaniu (tylko raz)
             if (!app.wasMinimizedNotificationShown) {
                 new Notification({
-                    title: 'AG Messenger',
+                    title: 'J-Connect Enterprise',
                     body: 'Aplikacja działa w tle. Kliknij ikonę w zasobniku aby otworzyć.'
                 }).show();
                 app.wasMinimizedNotificationShown = true;

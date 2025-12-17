@@ -3,6 +3,7 @@
 // ===========================================================================
 
 const fs = require('fs');
+const fsPromises = require('fs').promises;
 const path = require('path');
 const { app } = require('electron');
 
@@ -10,11 +11,12 @@ class UsageTracker {
     constructor() {
         this.dataPath = path.join(app.getPath('userData'), 'usage-stats.json');
         this.sessionStart = Date.now();
-        this.data = this.load();
+        this.data = this.loadSync(); // Sync tylko przy starcie
+        this.saveQueue = Promise.resolve(); // Kolejka zapisu
     }
 
-    // Załaduj dane z pliku
-    load() {
+    // Załaduj dane synchronicznie (tylko przy starcie)
+    loadSync() {
         try {
             if (fs.existsSync(this.dataPath)) {
                 const raw = fs.readFileSync(this.dataPath, 'utf8');
@@ -30,18 +32,25 @@ class UsageTracker {
             launchCount: 0,
             totalSessionMinutes: 0,
             lastLaunch: null,
-            loginEvents: [],
-            appVersion: '1.2.0'
+            loginEvents: []
         };
     }
 
-    // Zapisz dane do pliku
-    save() {
-        try {
-            fs.writeFileSync(this.dataPath, JSON.stringify(this.data, null, 2), 'utf8');
-        } catch (e) {
-            console.log('Nie można zapisać statystyk użycia:', e.message);
-        }
+    // Zapisz dane asynchronicznie (nie blokuje głównego wątku)
+    async save() {
+        // Używamy kolejki aby uniknąć równoczesnych zapisów
+        this.saveQueue = this.saveQueue.then(async () => {
+            try {
+                await fsPromises.writeFile(
+                    this.dataPath,
+                    JSON.stringify(this.data, null, 2),
+                    'utf8'
+                );
+            } catch (e) {
+                console.log('Nie można zapisać statystyk użycia:', e.message);
+            }
+        });
+        return this.saveQueue;
     }
 
     // Zarejestruj uruchomienie aplikacji
@@ -83,14 +92,14 @@ class UsageTracker {
             launchCount: this.data.launchCount,
             totalTime: `${hours}h ${minutes}min`,
             loginCount: this.data.loginEvents.length,
-            appVersion: this.data.appVersion
+            appVersion: app.getVersion() // Dynamicznie z package.json
         };
     }
 
     // Formatuj do wyświetlenia w dialogu
     getFormattedStats() {
         const s = this.getSummary();
-        return `📊 Statystyki użycia FB-Messenger-JaRoD
+        return `📊 Statystyki użycia J-Connect Enterprise
 
 📅 Pierwsze uruchomienie: ${s.firstLaunch}
 📅 Ostatnie uruchomienie: ${s.lastLaunch}
@@ -104,3 +113,4 @@ class UsageTracker {
 }
 
 module.exports = UsageTracker;
+

@@ -21,10 +21,7 @@
     "@electron-forge/plugin-auto-unpack-natives": "^7.10.2",
     "@electron-forge/plugin-fuses": "^7.10.2",
     "@electron/fuses": "^1.8.0",
-    "electron": "^39.2.7",
-    "png-to-ico": "^3.0.1",
-    "sharp": "^0.34.5",
-    "to-ico": "^1.1.5"
+    "electron": "^39.2.7"
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
