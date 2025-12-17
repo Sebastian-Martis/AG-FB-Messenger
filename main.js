@@ -5,6 +5,7 @@
 const { app, BrowserWindow, shell, Tray, Menu, nativeImage, globalShortcut, Notification, session, dialog } = require('electron');
 const path = require('path');
 const UsageTracker = require('./usage-tracker');
+const { autoUpdater } = require('electron-updater');
 
 // Obsługa instalatora Squirrel (Windows) - WAŻNE dla poprawnej instalacji/deinstalacji
 if (require('electron-squirrel-startup')) {
@@ -185,7 +186,7 @@ function createWindow() {
         y: windowBounds.y,
         minWidth: CONFIG.MIN_WIDTH,
         minHeight: CONFIG.MIN_HEIGHT,
-        title: 'FB-Messenger-JaRoD', // Zmiana tytułu
+        title: 'J-Connect Enterprise', // Nowa nazwa marketingowa
         icon: path.join(__dirname, 'assets', 'icon.png'), // Nowa ikona
         webPreferences: {
             nodeIntegration: false,
@@ -197,67 +198,9 @@ function createWindow() {
         backgroundColor: '#ffffff' // Białe tło dla splash screena
     });
 
-    // Utwórz menu aplikacji z działającymi skrótami
-    const menuTemplate = [
-        {
-            label: 'JaRoD-CENTER',
-            submenu: [
-                {
-                    label: 'O firmie',
-                    click: () => {
-                        dialog.showMessageBox(mainWindow, {
-                            type: 'info',
-                            title: 'O programie',
-                            message: 'FB-Messenger-JaRoD\n\nWersja: 1.2.0\nCreated by JaRoD-CENTER',
-                            icon: path.join(__dirname, 'assets', 'icon.png')
-                        });
-                    }
-                },
-                {
-                    label: '📊 Statystyki użycia',
-                    click: () => {
-                        if (usageTracker) {
-                            dialog.showMessageBox(mainWindow, {
-                                type: 'info',
-                                title: 'Statystyki użycia',
-                                message: usageTracker.getFormattedStats()
-                            });
-                        }
-                    }
-                },
-                { type: 'separator' },
-                {
-                    label: 'Zamknij',
-                    accelerator: 'Alt+F4',
-                    click: () => { isQuitting = true; app.quit(); }
-                }
-            ]
-        },
-        {
-            label: 'Widok',
-            submenu: [
-                {
-                    label: 'Odśwież / Wróć do Messenger',
-                    accelerator: 'CmdOrCtrl+R',
-                    click: () => { if (mainWindow) mainWindow.loadURL(CONFIG.MESSENGER_URL); }
-                },
-                {
-                    label: 'Odśwież (F5)',
-                    accelerator: 'F5',
-                    click: () => { if (mainWindow) mainWindow.loadURL(CONFIG.MESSENGER_URL); }
-                },
-                { type: 'separator' },
-                {
-                    label: 'Narzędzia deweloperskie',
-                    accelerator: 'F12',
-                    click: () => { if (mainWindow) mainWindow.webContents.toggleDevTools(); }
-                }
-            ]
-        }
-    ];
-
-    const menu = Menu.buildFromTemplate(menuTemplate);
-    Menu.setApplicationMenu(menu);
+    // Utwórz menu aplikacji
+    const { createMenu } = require('./menu');
+    createMenu(mainWindow, usageTracker);
 
     // Jeśli było zmaksymalizowane, zmaksymalizuj
     // if (isMaximized) {
@@ -290,13 +233,16 @@ function createWindow() {
         }
     });
 
-    // 2. Po 3 sekundach załaduj Messenger
+    // 2. Dynamiczny czas splash screena
+    // Powracający użytkownicy (>1 uruchomienie) = 2s, nowi = 6s
+    const splashDuration = (usageTracker && usageTracker.data.launchCount > 1) ? 2000 : 6000;
+
     setTimeout(() => {
         // Ustaw User-Agent
         mainWindow.webContents.setUserAgent(CONFIG.USER_AGENT);
         // Załaduj właściwą stronę
         mainWindow.loadURL(CONFIG.MESSENGER_URL);
-    }, 6000); // 6 sekund na przeczytanie instrukcji
+    }, splashDuration);
 
     // ===========================================================================
     // Obsługa zapisywania stanu okna
@@ -488,6 +434,11 @@ app.whenReady().then(async () => {
 
     // Zarejestruj skróty klawiaturowe
     registerShortcuts();
+
+    // Sprawdź aktualizacje (wymaga wrzucenia buildu na GitHub Releases)
+    autoUpdater.checkForUpdatesAndNotify().catch(err => {
+        console.log('Auto-update check failed:', err.message);
+    });
 
     // macOS: Utwórz okno po kliknięciu ikony w docku
     app.on('activate', () => {

@@ -1,7 +1,7 @@
 {
-  "name": "fb-messenger-jarod",
-  "version": "1.2.0",
-  "description": "FB Messenger JaRoD Edition",
+  "name": "j-connect",
+  "version": "2.0.0",
+  "description": "J-Connect Enterprise Communicator",
   "main": "main.js",
   "scripts": {
     "start": "electron-forge start",
@@ -28,6 +28,7 @@
   },
   "dependencies": {
     "electron-squirrel-startup": "^1.0.1",
-    "electron-store": "^11.0.2"
+    "electron-store": "^11.0.2",
+    "electron-updater": "^6.6.2"
   }
 }

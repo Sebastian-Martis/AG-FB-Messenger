@@ -13,7 +13,7 @@ module.exports = {
     {
       name: '@electron-forge/maker-squirrel',
       config: {
-        setupExe: 'FB-Messenger-JaRoD-Setup.exe',
+        setupExe: 'J-Connect-Setup.exe',
         setupIcon: path.resolve(__dirname, 'assets/app.ico')
       },
     },
