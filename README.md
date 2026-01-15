@@ -55,3 +55,6 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 
 ## License
 Private / Proprietary.
+
+## Known Issues
+- **Notifications:** While significantly improved, notifications may still occasionally behave inconsistently (e.g., repeating or missing sender name) due to the way Facebook Messenger dynamically updates the window title. Work on a perfect heuristic is ongoing.

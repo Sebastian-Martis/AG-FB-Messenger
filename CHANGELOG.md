@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.13] - 2026-01-15
+### Fixed
+- **Notification Spam:** Fixed a regression where a single message could trigger dozens of notifications. This was caused by the application reacting too quickly to "title flickering" (where Messenger briefly reports 0 unread messages during updates). The "Read Detection" is now buffered by 2 seconds to ignore these glitches.
+
+## [2.0.12] - 2026-01-15
+### Fixed
+- **Wrong Sender Fix:** Fixed the bug where the notification displayed the name of the *open conversation* (e.g. "Alice") instead of the person who actually wrote (e.g. "Bob"). The app now strictly differentiates between "Active Chat Names" and "New Message Alerts" (which contain colons or action verbs), defaulting to "New Message" if it's not 100% sure.
+- **Notification Protection:** If a specific notification (e.g. "Bob: Hello") is displayed, it is now protected for 5 seconds from being overwritten by a generic "New Message" update, ensuring you have time to read who wrote to you.
+
+## [2.0.11] - 2026-01-15
+### Fixed
+- **Sender Info:** Restored sender display in notifications. It now intelligently extracts "Name: Message" from the window title, so you know who is writing.
+- **Missed Notifications:** Completely overhauled the detection logic. Now, *any* change in message content (e.g., from "John" to "Alice") triggers a notification immediately, even if the "Unread Count" technically didn't increase (e.g. fast switching). This eliminates the "Blind Spot" where some messages were silent.
+
+## [2.0.10] - 2026-01-15
+### Fixed
+- **Notification Reliability:** Fixed an issue where rapid messages might be ignored. The app now uses advanced heuristics to distinguish between system glitches (flickering titles) and actual new messages arriving quickly.
+- **Sender Name Fix:** Fixed a bug where the notification sometimes displayed the name of the *open chat* instead of the sender. Notifications are now always titled "Nowa wiadomość" (New Message) for consistency and accuracy.
+
 ## [2.0.9] - 2026-01-15
 ### Fixed
 - **Flashing & Reset Fix:** Improved logic to stop the icon from flashing immediately after messages are read.

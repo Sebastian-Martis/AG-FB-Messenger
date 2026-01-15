@@ -124,6 +124,8 @@ public partial class MainWindow : Window
 
     private string _lastTitle = "";
     private DateTime _lastNotificationTime = DateTime.MinValue;
+    private string _lastNotifiedSpecificContent = "";
+    private DateTime _lastSpecificNotificationTime = DateTime.MinValue;
     private int _confirmedUnreadCount = 0;
     private System.Windows.Threading.DispatcherTimer? _debounceTimer;
 
@@ -131,58 +133,96 @@ public partial class MainWindow : Window
     {
         var title = WebView.CoreWebView2.DocumentTitle;
         if (string.IsNullOrEmpty(title) || title == _lastTitle) return;
-
         _lastTitle = title;
-        int currentCount = GetUnreadCount(title);
 
-        // Logic:
-        // 1. If count INCREASES above confirmed -> Immediate Notification (New Message)
-        // 2. If count DECREASES (to 0 or lower) -> Debounce (Wait to see if it's just a title toggle)
-        
-        if (currentCount > _confirmedUnreadCount)
+        int? currentCount = GetUnreadCount(title);
+        string currentContent = GetCleanContent(title);
+        bool isSpecific = IsSpecific(currentContent);
+
+        // Case A: Specific Content (e.g. "Bob: Hello")
+        if (isSpecific)
         {
-            // Cancel any pending 'read' confirmation
-            if (_debounceTimer != null) 
+            if (currentContent != _lastNotifiedSpecificContent)
             {
-                _debounceTimer.Stop();
-                _debounceTimer = null;
+                _lastNotifiedSpecificContent = currentContent;
+                _lastSpecificNotificationTime = DateTime.Now;
+                TriggerSmartNotification(currentContent, true);
             }
-
-            _confirmedUnreadCount = currentCount;
-            TriggerNotificationFromTitle(title);
+            return;
         }
-        else if (currentCount < _confirmedUnreadCount)
+
+        // Case B: Generic or Active Chat Title
+        if (currentCount.HasValue)
         {
-            // Potentially read, or just a title glitch (1 -> 0 -> 1)
-            // Start debounce timer if not running
-            if (_debounceTimer == null)
+            if (currentCount.Value > _confirmedUnreadCount)
             {
-                _debounceTimer = new System.Windows.Threading.DispatcherTimer();
-                _debounceTimer.Interval = TimeSpan.FromSeconds(2); // 2 second grace period
-                _debounceTimer.Tick += (s, args) => 
+                // New Message Detected
+                
+                // Cancel any pending "Read" debounce, we are definitely NOT read.
+                if (_debounceTimer != null)
                 {
                     _debounceTimer.Stop();
                     _debounceTimer = null;
-                    
-                    // Verify correct state after delay
-                    var freshTitle = WebView.CoreWebView2.DocumentTitle;
-                    int freshCount = GetUnreadCount(freshTitle);
-                    
-                    if (freshCount < _confirmedUnreadCount)
+                }
+
+                _confirmedUnreadCount = currentCount.Value;
+                
+                // Protect specific notifications from being overwritten immediately
+                if ((DateTime.Now - _lastSpecificNotificationTime).TotalSeconds > 5)
+                {
+                    TriggerSmartNotification(currentContent, false);
+                }
+            }
+            else if (currentCount.Value < _confirmedUnreadCount)
+            {
+                // Potential Read (Count Decreased)
+                // Start Debounce to verify it's not a flicker (1 -> 0 -> 1)
+                
+                if (_debounceTimer == null)
+                {
+                    _debounceTimer = new System.Windows.Threading.DispatcherTimer();
+                    _debounceTimer.Interval = TimeSpan.FromSeconds(2); // 2 second buffer
+                    _debounceTimer.Tick += (s, args) => 
                     {
-                        // Confirmed: User actually read the messages
-                        _confirmedUnreadCount = freshCount;
-                        
-                        // Stop flashing as we are now "Read"
-                        if (_confirmedUnreadCount == 0)
+                        var timer = _debounceTimer; // Capture ref
+                        if (timer != null) 
                         {
-                            StopFlashingUI();
+                            timer.Stop(); 
+                            _debounceTimer = null;
                         }
-                    }
-                };
-                _debounceTimer.Start();
+
+                        // Re-check state after wait
+                        var freshTitle = WebView.CoreWebView2.DocumentTitle;
+                        var freshCount = GetUnreadCount(freshTitle);
+
+                        // If still lower, confirm read
+                        if (freshCount.HasValue && freshCount.Value < _confirmedUnreadCount)
+                        {
+                            _confirmedUnreadCount = freshCount.Value;
+                            if (_confirmedUnreadCount == 0) StopFlashingUI();
+                        }
+                    };
+                    _debounceTimer.Start();
+                }
             }
         }
+    }
+
+    private string GetCleanContent(string title)
+    {
+        // Remove "(N) " prefix from string
+        return System.Text.RegularExpressions.Regex.Replace(title, @"^\(\d+\)\s*", "").Trim();
+    }
+
+    private bool IsSpecific(string content)
+    {
+        if (string.IsNullOrWhiteSpace(content)) return false;
+        // Must contain colon OR action verbs to be a "Sender Message"
+        // Simple names like "Alice" are rejected (they are likely just the active chat).
+        return content.Contains(":") 
+            || content.Contains("wysłał") 
+            || content.Contains("sent a") 
+            || content.Contains("przesyła");
     }
 
     private void StopFlashingUI()
@@ -194,14 +234,57 @@ public partial class MainWindow : Window
         });
     }
 
-    private int GetUnreadCount(string title)
+    private void TriggerSmartNotification(string cleanContent, bool isSpecific)
     {
-        // Simple and strict: If it has (N), it's N. Else it's 0.
+        string notifyTitle = "Nowa wiadomość";
+        string notifyBody = "Masz nieprzeczytane wiadomości.";
+
+        if (isSpecific)
+        {
+            // Try "Sender: Message"
+            var parts = cleanContent.Split(new[] { ':' }, 2);
+            if (parts.Length == 2)
+            {
+                notifyTitle = parts[0].Trim();
+                notifyBody = parts[1].Trim();
+            }
+            else
+            {
+                // Action verb format: "John sent a photo"
+                // Use generic title, but specific body
+                notifyTitle = "FB-Messenger";
+                notifyBody = cleanContent;
+            }
+        }
+
+        Dispatcher.Invoke(() => 
+        {
+            _trayIconService.ShowBalloonTip(notifyTitle, notifyBody);
+            
+            if (Visibility == Visibility.Hidden || Visibility == Visibility.Collapsed)
+            {
+                Show();
+                WindowState = WindowState.Minimized;
+            }
+            
+            FlashTaskbar();
+        });
+    }
+
+    private int? GetUnreadCount(string title)
+    {
+        // 1. Explicit count regex: "(N) ..." -> Return N
         var match = System.Text.RegularExpressions.Regex.Match(title, @"^\((\d+)\)");
         if (match.Success && int.TryParse(match.Groups[1].Value, out int count))
         {
             return count;
         }
+
+        // 2. Specific Titles (Sender: Msg) -> Indeterminate (null)
+        // We don't want to mess up the count based on these.
+        if (IsSpecific(title)) return null;
+
+        // 3. Simple Titles (Messenger, Alice) -> 0 Unread
         return 0;
     }
 
