@@ -1,0 +1,14 @@
+{
+  "version": "1.0",
+  "project_name": "AG-Facebook-Messenger",
+  "settings": {
+    "auto_load_global_skills": true,
+    "enforce_standards": true
+  },
+  "required_skills": [
+    "global:architect-core",
+    "global:gitops-expert",
+    "global:doc-sentinel",
+    "global:quality-enforcer"
+  ]
+}
