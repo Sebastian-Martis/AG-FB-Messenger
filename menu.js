@@ -12,7 +12,7 @@ function createMenu(mainWindow, usageTracker) {
                         dialog.showMessageBox(mainWindow, {
                             type: 'info',
                             title: 'O programie',
-                            message: 'J-Connect Enterprise\n\nWersja: ' + app.getVersion() + '\nCreated by JaRoD-CENTER',
+                            message: 'AG Messenger\n\nWersja: ' + app.getVersion() + '\nCreated by JaRoD-CENTER',
                             icon: path.join(__dirname, 'assets', 'icon.png')
                         });
                     }
@@ -32,7 +32,7 @@ function createMenu(mainWindow, usageTracker) {
                 {
                     label: '💬 Wyślij opinię / Zgłoś błąd',
                     click: () => {
-                        shell.openExternal('mailto:biuro@jarod-center.com?subject=J-Connect%20Enterprise%20Feedback');
+                        shell.openExternal('mailto:sebastian@jarod.center?subject=AG%20Messenger%20Feedback');
                     }
                 },
                 { type: 'separator' },
