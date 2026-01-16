@@ -1,24 +1,44 @@
-using System.Diagnostics;
+using System;
 using System.IO;
+using System.Linq;
 using System.Windows;
 using System.Windows.Input;
+using System.Diagnostics;
 using Microsoft.Web.WebView2.Core;
-using AGMessenger.Services;
+using Hardcodet.Wpf.TaskbarNotification;
+using AGMessenger.Services; 
+using System.Text.Json; 
 
 namespace AGMessenger;
 
 public partial class MainWindow : Window
 {
-    private readonly WindowStateManager _windowStateManager;
-    private readonly TrayIconService _trayIconService;
-    private readonly UpdateService _updateService;
+    private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    private readonly string[] AllowedDomains = { "facebook.com", "messenger.com", "fb.com" };
+    
+    // Services
+    private WindowStateManager _windowStateManager;
+    private TrayIconService _trayIconService;
+    private UpdateService _updateService;
+    
+    // State
     private bool _isQuitting = false;
     private bool _wasMinimizedNotificationShown = false;
-
-    // Configuration
-    private const string MessengerUrl = "https://www.messenger.com/";
-    private const string UserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
-    private static readonly string[] AllowedDomains = { "messenger.com", "facebook.com", "fbcdn.net", "google.com", "facebook.net" };
+    private System.Windows.Threading.DispatcherTimer? _debounceTimer;
+    
+    // Notification Logic
+    private int _confirmedUnreadCount = 0; 
+    private DateTime _lastSpecificNotificationTime = DateTime.MinValue;
+    private string _lastTitle = "";
+    
+    // New Smart Notification Logic
+    private int _internalMessageCounter = 0; 
+    private int _realUnreadCount = 0; 
+    private string _lastKnownSender = ""; 
+    private string _lastNotifiedSpecificContent = ""; 
+    private string _lastSeenSpecificContent = ""; 
+    private DateTime _windowActivatedTime = DateTime.MinValue;
+    private DateTime _lastAudioNotification = DateTime.MinValue;
 
     public MainWindow()
     {
@@ -40,7 +60,7 @@ public partial class MainWindow : Window
         // Initialize WebView2
         InitializeWebViewAsync();
 
-        // Check for updates checks
+        // Check for updates
         CheckForUpdates(silent: true);
         
         // Start periodic update checker (every 1 hour)
@@ -55,26 +75,27 @@ public partial class MainWindow : Window
 
     private void MainWindow_Activated(object? sender, EventArgs e)
     {
-        // When user focuses the window, assume they are reading messages
-        if (_internalMessageCounter > 0 || _realUnreadCount > 0)
-        {
-            _internalMessageCounter = 0;
-            _realUnreadCount = 0; // Optimistic reset
-            _trayIconService.StopFlashing();
-        }
+        _internalMessageCounter = 0;
+        _realUnreadCount = 0;
+        _confirmedUnreadCount = 0;
+        _lastNotifiedSpecificContent = "";
+        _lastSeenSpecificContent = "";
+        
+        // Explicitly clear badge to zero
+        if (_trayIconService != null) _trayIconService.UpdateBadge(0);
+        StopTaskbarFlash();
     }
 
-    public void CheckForUpdates(bool silent = false)
+    public async void CheckForUpdates(bool silent = false)
     {
-        // Fire and forget
-        _ = _updateService.CheckForUpdatesAsync(silent);
+        await _updateService.CheckForUpdatesAsync(silent);
     }
 
     private async void InitializeWebViewAsync()
     {
         try
         {
-            // Create environment with persistent user data (cookies, sessions)
+            // Create environment with persistent user data
             var userDataFolder = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "AGMessenger", "WebView2Data");
@@ -90,21 +111,33 @@ public partial class MainWindow : Window
             settings.AreDefaultScriptDialogsEnabled = true;
             settings.IsWebMessageEnabled = true;
 
-            // Handle web messages (shim for notifications)
+            // Handle web messages
             WebView.CoreWebView2.WebMessageReceived += CoreWebView2_WebMessageReceived;
 
-            // Inject aggressive message detection script
+            // Inject scripts
             await WebView.CoreWebView2.AddScriptToExecuteOnDocumentCreatedAsync(@"
                 (function() {
                     let lastContent = '';
                     let msgCount = 0;
                     
-                    // Audio Hook
+                    // Audio Hook (HTML5)
                     const origAudioPlay = window.Audio.prototype.play;
                     window.Audio.prototype.play = function() {
-                        window.chrome.webview.postMessage(JSON.stringify({ type: 'audio_notification' }));
+                        window.chrome.webview.postMessage(JSON.stringify({ type: 'audio_notification', source: 'html5' }));
                         return origAudioPlay.apply(this, arguments);
                     };
+
+                    // Web Audio API Hook
+                    if (window.AudioBufferSourceNode) {
+                        const origStart = window.AudioBufferSourceNode.prototype.start;
+                        window.AudioBufferSourceNode.prototype.start = function() {
+                            window.chrome.webview.postMessage(JSON.stringify({ 
+                                type: 'audio_notification', 
+                                source: 'web_audio' 
+                            }));
+                            return origStart.apply(this, arguments);
+                        };
+                    }
 
                     // Notification Shim
                     const origNotif = window.Notification;
@@ -122,6 +155,72 @@ public partial class MainWindow : Window
                     window.Notification.requestPermission = async () => 'granted';
                     if (origNotif) Object.assign(window.Notification, origNotif);
                     
+                    // ARIA/Global Crawler (Max-Count Strategy)
+                    setInterval(function() {
+                        try {
+                            // 1. Global Badge (Red Pill on Chats icon)
+                            let badgeCount = 0;
+                            // Search for specific navigation buttons for reliability
+                            const navButtons = document.querySelectorAll('[role=""navigation""] [role=""button""]');
+                            navButtons.forEach(btn => {
+                                const label = btn.getAttribute('aria-label') || '';
+                                if (label === 'Chats' || label === 'Czaty' || label.includes('Messenger')) {
+                                    const badge = btn.querySelector('span span span');
+                                    if (badge) {
+                                        const val = parseInt(badge.innerText);
+                                        if (!isNaN(val)) badgeCount = val;
+                                    }
+                                }
+                            });
+                             // Fallback: try raw selector if labeled lookup failed
+                            if (badgeCount === 0) {
+                                const rawBadge = document.querySelector('[role=""navigation""] [role=""button""] span span span');
+                                if (rawBadge) {
+                                     const val = parseInt(rawBadge.innerText);
+                                     if (!isNaN(val)) badgeCount = val;
+                                }
+                            }
+
+                            // 2. Title Count '(N) Messenger'
+                            let titleCount = 0;
+                            const titleMatch = document.title.match(/^\((\d+)\)/);
+                            if (titleMatch) {
+                                titleCount = parseInt(titleMatch[1]);
+                            }
+
+                            // 3. Row Summation
+                            let rowSum = 0;
+                            const elements = document.querySelectorAll('[aria-label]');
+                            const regex = /(\d+)\s+(?:unread|nieprzeczytan|nowych|new)/i;
+                            elements.forEach(el => {
+                                const label = el.getAttribute('aria-label');
+                                if (!label) return;
+                                const match = label.match(regex);
+                                if (match) {
+                                    const count = parseInt(match[1]);
+                                    if (count > 0 && count < 100) {
+                                        rowSum += count;
+                                    }
+                                }
+                            });
+
+                            // DECISION: Take the MAXIMUM of identified counts
+                            const finalCount = Math.max(badgeCount, titleCount, rowSum);
+                            
+                            let strategy = 'max_strategy';
+                             if (finalCount === badgeCount && badgeCount > 0) strategy = 'badge';
+                             else if (finalCount === titleCount && titleCount > 0) strategy = 'title';
+                             else if (finalCount === rowSum && rowSum > 0) strategy = 'row_sum';
+
+                             window.chrome.webview.postMessage(JSON.stringify({ 
+                                type: 'aria_count_update', 
+                                count: finalCount,
+                                strategy: strategy,
+                                debug: { badge: badgeCount, title: titleCount, rows: rowSum }
+                            }));
+                        } catch(e) {}
+                    }, 2000);
+
                     // Polling
                     setInterval(function() {
                         const title = document.title || '';
@@ -130,7 +229,6 @@ public partial class MainWindow : Window
                         if (content && content !== lastContent && content !== 'Messenger') {
                             if (content.includes(':') || content.includes(' sent ') || content.includes(' wysłał')) {
                                 lastContent = content;
-                                // Audio handles count, this handles content
                                 let sender = 'FB-Messenger', msg = content;
                                 const idx = content.indexOf(':');
                                 if (idx > 0) {
@@ -154,47 +252,34 @@ public partial class MainWindow : Window
                 })();
             ");
 
-            // Handle permission requests (notifications, etc.)
+            // Handle permission requests
             WebView.CoreWebView2.PermissionRequested += CoreWebView2_PermissionRequested;
 
-            // Handle title changes (fallback for notifications)
+            // Handle title changes
             WebView.CoreWebView2.DocumentTitleChanged += CoreWebView2_DocumentTitleChanged;
 
-            // Handle web notifications - show as Windows toast
+            // Handle web notifications
             WebView.CoreWebView2.NotificationReceived += CoreWebView2_NotificationReceived;
-
-            // Handle new window requests (external links)
+            
+            // New Window
             WebView.CoreWebView2.NewWindowRequested += CoreWebView2_NewWindowRequested;
             
-            // Handle navigation (block leaving Messenger)
+            // Navigation
             WebView.CoreWebView2.NavigationStarting += CoreWebView2_NavigationStarting;
-            
-            // Handle navigation failures
             WebView.CoreWebView2.NavigationCompleted += CoreWebView2_NavigationCompleted;
 
             // Load Messenger
-            WebView.CoreWebView2.Navigate(MessengerUrl);
+            WebView.Source = new Uri("https://www.messenger.com/");
         }
         catch (Exception ex)
         {
-            ShowError($"Nie można zainicjalizować WebView2: {ex.Message}");
+            ShowError($"Błąd inicjalizacji WebView2: {ex.Message}");
         }
     }
 
-    private string _lastTitle = "";
-    private string _lastNotifiedSpecificContent = "";
-    private DateTime _lastSpecificNotificationTime = DateTime.MinValue;
-    private int _confirmedUnreadCount = 0;
-    private int _realUnreadCount = 0; // True unread count from DOM monitoring
-    private int _internalMessageCounter = 0; // Our own counter - increments on each new message
-    private System.Windows.Threading.DispatcherTimer? _debounceTimer;
-    private string _lastKnownSender = ""; // Track sender for generic notifications
-    private string _lastSeenSpecificContent = ""; // What user has "seen" when window is active
-    private DateTime _windowActivatedTime = DateTime.MinValue;
-
     private void CoreWebView2_DocumentTitleChanged(object? sender, object e)
     {
-        var title = WebView.CoreWebView2.DocumentTitle;
+        string title = WebView.CoreWebView2.DocumentTitle;
         if (string.IsNullOrEmpty(title) || title == _lastTitle) return;
         _lastTitle = title;
 
@@ -202,75 +287,37 @@ public partial class MainWindow : Window
         string currentContent = GetCleanContent(title);
         bool isSpecific = IsSpecific(currentContent);
 
-        // DEBUG: Uncomment to trace title changes
-        // System.Diagnostics.Debug.WriteLine($"[TITLE] '{title}' | Count={currentCount} | Specific={isSpecific} | Content='{currentContent}'");
-
-        // Case A: Specific Content (e.g. "Bob: Hello", "Bob sent a photo")
-        // This is the PRIMARY notification trigger - content-based, not count-based
         if (isSpecific)
         {
-            // Extract sender name for later use
             var senderParts = currentContent.Split(new[] { ':' }, 2);
-            if (senderParts.Length >= 1)
-            {
-                _lastKnownSender = senderParts[0].Trim();
-            }
+            if (senderParts.Length >= 1) _lastKnownSender = senderParts[0].Trim();
 
-            // KEY FIX: Notify on ANY change in specific content, 
-            // UNLESS it's the same content we already notified about OR user just saw it
             bool alreadyNotified = (currentContent == _lastNotifiedSpecificContent);
             bool userJustSawIt = IsActive && (currentContent == _lastSeenSpecificContent);
-            
-            // Also check if we recently activated window (give 1 second grace period)
             bool justActivated = IsActive && (DateTime.Now - _windowActivatedTime).TotalSeconds < 1;
             
             if (!alreadyNotified && !userJustSawIt && !justActivated)
             {
                 _lastNotifiedSpecificContent = currentContent;
                 _lastSpecificNotificationTime = DateTime.Now;
-                
-                // INCREMENT our internal counter - this is the real message count
                 _internalMessageCounter++;
-                
                 TriggerSmartNotification(currentContent, true);
             }
-            
-            // Update what we're showing now
-            if (IsActive)
-            {
-                _lastSeenSpecificContent = currentContent;
-            }
-            
+            if (IsActive) _lastSeenSpecificContent = currentContent;
             return;
         }
 
-        // Case B: Generic Title with Count (e.g. "(2) Messenger", "(1) Alice")
-        // Secondary trigger - only used when no specific content available
         if (currentCount.HasValue && currentCount.Value > 0)
         {
             if (currentCount.Value > _confirmedUnreadCount)
             {
-                // New Message Detected via count increase
-                
-                // Cancel any pending "Read" debounce
-                if (_debounceTimer != null)
-                {
-                    _debounceTimer.Stop();
-                    _debounceTimer = null;
-                }
-
+                if (_debounceTimer != null) { _debounceTimer.Stop(); _debounceTimer = null; }
                 _confirmedUnreadCount = currentCount.Value;
-                
-                // Only show generic notification if we haven't shown a specific one recently
                 if ((DateTime.Now - _lastSpecificNotificationTime).TotalSeconds > 2)
-                {
                     TriggerSmartNotification(currentContent, false);
-                }
             }
             else if (currentCount.Value < _confirmedUnreadCount)
             {
-                // Potential Read (Count Decreased)
-                // Start Debounce to verify
                 if (_debounceTimer == null)
                 {
                     _debounceTimer = new System.Windows.Threading.DispatcherTimer();
@@ -278,25 +325,18 @@ public partial class MainWindow : Window
                     _debounceTimer.Tick += (s, args) => 
                     {
                         var timer = _debounceTimer;
-                        if (timer != null) 
-                        {
-                            timer.Stop(); 
-                            _debounceTimer = null;
-                        }
-
+                        if (timer != null) { timer.Stop(); _debounceTimer = null; }
                         var freshTitle = WebView.CoreWebView2.DocumentTitle;
                         var freshCount = GetUnreadCount(freshTitle);
-
                         if (freshCount.HasValue && freshCount.Value < _confirmedUnreadCount)
                         {
                             _confirmedUnreadCount = freshCount.Value;
                             if (_confirmedUnreadCount == 0)
                             {
                                 StopFlashingUI();
-                                // Reset ALL tracking when all messages read
                                 _lastNotifiedSpecificContent = "";
                                 _lastSeenSpecificContent = "";
-                                _internalMessageCounter = 0; // Reset our counter
+                                _internalMessageCounter = 0;
                             }
                         }
                     };
@@ -306,10 +346,8 @@ public partial class MainWindow : Window
         }
         else if (currentCount.HasValue && currentCount.Value == 0)
         {
-            // Count is 0 - possibly read all messages
             if (_confirmedUnreadCount > 0)
             {
-                // Start debounce for read confirmation
                 if (_debounceTimer == null)
                 {
                     _debounceTimer = new System.Windows.Threading.DispatcherTimer();
@@ -317,22 +355,16 @@ public partial class MainWindow : Window
                     _debounceTimer.Tick += (s, args) => 
                     {
                         var timer = _debounceTimer;
-                        if (timer != null) 
-                        {
-                            timer.Stop(); 
-                            _debounceTimer = null;
-                        }
-
+                        if (timer != null) { timer.Stop(); _debounceTimer = null; }
                         var freshTitle = WebView.CoreWebView2.DocumentTitle;
                         var freshCount = GetUnreadCount(freshTitle);
-
                         if (freshCount.HasValue && freshCount.Value == 0)
                         {
                             _confirmedUnreadCount = 0;
                             StopFlashingUI();
                             _lastNotifiedSpecificContent = "";
                             _lastSeenSpecificContent = "";
-                            _internalMessageCounter = 0; // Reset our counter
+                            _internalMessageCounter = 0;
                         }
                     };
                     _debounceTimer.Start();
@@ -343,19 +375,13 @@ public partial class MainWindow : Window
 
     private string GetCleanContent(string title)
     {
-        // Remove "(N) " prefix from string
         return System.Text.RegularExpressions.Regex.Replace(title, @"^\(\d+\)\s*", "").Trim();
     }
 
     private bool IsSpecific(string content)
     {
         if (string.IsNullOrWhiteSpace(content)) return false;
-        // Must contain colon OR action verbs to be a "Sender Message"
-        // Simple names like "Alice" are rejected (they are likely just the active chat).
-        return content.Contains(":") 
-            || content.Contains("wysłał") 
-            || content.Contains("sent a") 
-            || content.Contains("przesyła");
+        return content.Contains(":") || content.Contains("wysłał") || content.Contains("sent a") || content.Contains("przesyła");
     }
 
     private void StopFlashingUI()
@@ -374,25 +400,21 @@ public partial class MainWindow : Window
 
         if (isSpecific)
         {
-            // Try "Sender: Message"
             var parts = cleanContent.Split(new[] { ':' }, 2);
             if (parts.Length == 2)
             {
                 notifyTitle = parts[0].Trim();
                 notifyBody = parts[1].Trim();
-                _lastKnownSender = notifyTitle; // Remember sender
+                _lastKnownSender = notifyTitle;
             }
             else
             {
-                // Action verb format: "John sent a photo"
-                // Use generic title, but specific body
                 notifyTitle = "FB-Messenger";
                 notifyBody = cleanContent;
             }
         }
         else
         {
-            // Generic notification - use last known sender if available
             if (!string.IsNullOrEmpty(_lastKnownSender))
             {
                 notifyTitle = _lastKnownSender;
@@ -402,81 +424,39 @@ public partial class MainWindow : Window
 
         Dispatcher.Invoke(() => 
         {
-            _trayIconService.ShowBalloonTip(notifyTitle, notifyBody, _internalMessageCounter > 0 ? _internalMessageCounter : Math.Max(_realUnreadCount, _confirmedUnreadCount));
+            int count = _internalMessageCounter > 0 ? _internalMessageCounter : Math.Max(_realUnreadCount, _confirmedUnreadCount);
+            _trayIconService.ShowBalloonTip(notifyTitle, notifyBody, count > 0 ? count : 1);
             
             if (Visibility == Visibility.Hidden || Visibility == Visibility.Collapsed)
             {
                 Show();
                 WindowState = WindowState.Minimized;
             }
-            
             FlashTaskbar();
         });
     }
 
     private int? GetUnreadCount(string title)
     {
-        // 1. Explicit count regex: "(N) ..." -> Return N
         var match = System.Text.RegularExpressions.Regex.Match(title, @"^\((\d+)\)");
-        if (match.Success && int.TryParse(match.Groups[1].Value, out int count))
-        {
-            return count;
-        }
-
-        // 2. Specific Titles (Sender: Msg) -> Indeterminate (null)
-        // We don't want to mess up the count based on these.
+        if (match.Success && int.TryParse(match.Groups[1].Value, out int count)) return count;
         if (IsSpecific(title)) return null;
-
-        // 3. Simple Titles (Messenger, Alice) -> 0 Unread
         return 0;
     }
 
-    private void TriggerNotificationFromTitle(string title)
-    {
-        // Clean title: remove "(N) " prefix
-        string cleanTitle = System.Text.RegularExpressions.Regex.Replace(title, @"^\(\d+\)\s*", "");
-        if (string.IsNullOrWhiteSpace(cleanTitle) || cleanTitle == "Messenger" || cleanTitle == "Facebook") 
-        {
-            cleanTitle = "Nowa wiadomość";
-        }
-        
-        string body = "Masz nieprzeczytane wiadomości na Messengerze.";
-        
-        // Use clean title as context if it's specific
-        if (cleanTitle != "Nowa wiadomość")
-        {
-             body = cleanTitle;
-             cleanTitle = "FB-Messenger";
-        }
-
-        Dispatcher.Invoke(() => 
-        {
-            _trayIconService.ShowBalloonTip(cleanTitle, body, _internalMessageCounter > 0 ? _internalMessageCounter : Math.Max(_realUnreadCount, _confirmedUnreadCount));
-            
-            if (Visibility == Visibility.Hidden || Visibility == Visibility.Collapsed)
-            {
-                Show();
-                WindowState = WindowState.Minimized;
-            }
-            
-            FlashTaskbar();
-        });
-    }
+    private void TriggerNotificationFromTitle(string title) { }
 
     private void CoreWebView2_NewWindowRequested(object? sender, CoreWebView2NewWindowRequestedEventArgs e)
     {
         var url = e.Uri;
         bool isAllowed = AllowedDomains.Any(domain => url.Contains(domain));
-
         if (!isAllowed)
         {
-            // Open in default browser
             e.Handled = true;
             Process.Start(new ProcessStartInfo(url) { UseShellExecute = true });
         }
         else
         {
-            // Allow opening in app (new window)
             e.Handled = false;
         }
     }
@@ -485,7 +465,6 @@ public partial class MainWindow : Window
     {
         var url = e.Uri;
         bool isAllowed = AllowedDomains.Any(domain => url.Contains(domain));
-
         if (!isAllowed)
         {
             e.Cancel = true;
@@ -495,32 +474,18 @@ public partial class MainWindow : Window
 
     private void CoreWebView2_NavigationCompleted(object? sender, CoreWebView2NavigationCompletedEventArgs e)
     {
-        if (!e.IsSuccess)
-        {
-            ErrorOverlay.Visibility = Visibility.Visible;
-        }
-        else
-        {
-            ErrorOverlay.Visibility = Visibility.Collapsed;
-        }
+        if (!e.IsSuccess) ErrorOverlay.Visibility = Visibility.Visible;
+        else ErrorOverlay.Visibility = Visibility.Collapsed;
     }
 
     private void CoreWebView2_PermissionRequested(object? sender, CoreWebView2PermissionRequestedEventArgs e)
     {
-        // Auto-allow notifications from Messenger/Facebook
         if (e.PermissionKind == CoreWebView2PermissionKind.Notifications)
         {
             var uri = e.Uri;
-            bool isAllowed = AllowedDomains.Any(domain => uri.Contains(domain));
-            
-            if (isAllowed)
-            {
-                e.State = CoreWebView2PermissionState.Allow;
-            }
+            if (AllowedDomains.Any(domain => uri.Contains(domain))) e.State = CoreWebView2PermissionState.Allow;
         }
-        // Auto-allow microphone and camera for calls
-        else if (e.PermissionKind == CoreWebView2PermissionKind.Microphone ||
-                 e.PermissionKind == CoreWebView2PermissionKind.Camera)
+        else if (e.PermissionKind == CoreWebView2PermissionKind.Microphone || e.PermissionKind == CoreWebView2PermissionKind.Camera)
         {
             e.State = CoreWebView2PermissionState.Allow;
         }
@@ -528,13 +493,8 @@ public partial class MainWindow : Window
 
     private void CoreWebView2_NotificationReceived(object? sender, CoreWebView2NotificationReceivedEventArgs e)
     {
-        // Mark as handled so we can show our own custom notification
         e.Handled = true;
-
-        // Get notification content
-        var title = e.Notification.Title;
-        var body = e.Notification.Body;
-        ShowNotification(title, body);
+        ShowNotification(e.Notification.Title, e.Notification.Body);
     }
 
     private void CoreWebView2_WebMessageReceived(object? sender, CoreWebView2WebMessageReceivedEventArgs e)
@@ -544,91 +504,107 @@ public partial class MainWindow : Window
             var json = e.TryGetWebMessageAsString();
             if (string.IsNullOrEmpty(json)) return;
 
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            using var doc = JsonDocument.Parse(json);
             var root = doc.RootElement;
-            
             var messageType = root.TryGetProperty("type", out var typeProp) ? typeProp.GetString() : null;
-            
+
             if (messageType == "notification")
             {
                 var title = root.TryGetProperty("title", out var titleProp) ? titleProp.GetString() : "FB-Messenger";
                 var body = root.TryGetProperty("body", out var bodyProp) ? bodyProp.GetString() : "";
-                
                 ShowNotification(title ?? "FB-Messenger", body ?? "");
             }
             else if (messageType == "audio_notification")
             {
-                // Trusted "New Message" trigger based on sound
-                // Using dispatcher to ensure thread safety for UI updates
+                if ((DateTime.Now - _lastAudioNotification).TotalMilliseconds < 200) return;
+                _lastAudioNotification = DateTime.Now;
                 Dispatcher.Invoke(() =>
                 {
                     _internalMessageCounter++;
                     _trayIconService.FlashIcon(_internalMessageCounter);
                     FlashTaskbar();
-                    
-                    // Show notification with last known sender or generic
-                    // If we have recent specific content, us it; otherwise generic
                     string title = !string.IsNullOrEmpty(_lastKnownSender) ? _lastKnownSender : "FB-Messenger";
                     string body = !string.IsNullOrEmpty(_lastNotifiedSpecificContent) ? _lastNotifiedSpecificContent : "Nowa wiadomość";
-                    
-                    // Don't show balloon if we just showed one for this content (debounce handled in JS but good to double check)
-                    // But for audio, we ALWAYS want to flash/count
                     _trayIconService.ShowBalloonTip(title, body, _internalMessageCounter);
                 });
+            }
+            else if (messageType == "aria_count_update")
+            {
+                int ariaCount = root.TryGetProperty("count", out var countProp) ? countProp.GetInt32() : 0;
+                string? strategy = root.TryGetProperty("strategy", out var straProp) ? straProp.GetString() : "unknown";
+
+                // If user is actively reading (focused), suppress counts
+                if (IsActive && WindowState != WindowState.Minimized)
+                {
+                   _internalMessageCounter = 0;
+                   return;
+                }
+
+                if (ariaCount != _internalMessageCounter)
+                {
+                    bool increased = ariaCount > _internalMessageCounter;
+                    _internalMessageCounter = ariaCount;
+                    
+                    Dispatcher.Invoke(() =>
+                    {
+                        if (increased)
+                        {
+                            _trayIconService.FlashIcon(_internalMessageCounter);
+                            FlashTaskbar();
+                            
+                            string title = !string.IsNullOrEmpty(_lastKnownSender) ? _lastKnownSender : "FB-Messenger";
+                            string body = $"{_internalMessageCounter} nieprzeczytanych wiadomości";
+                            
+                            _trayIconService.ShowBalloonTip(title, body, _internalMessageCounter);
+                        }
+                        else if (ariaCount == 0)
+                        {
+                            _trayIconService.UpdateBadge(0);
+                        }
+                        else
+                        {
+                            _trayIconService.UpdateBadge(_internalMessageCounter);
+                        }
+                    });
+                }
             }
             else if (messageType == "title_content_update")
             {
-                // Just update the content text, don't increment counter (audio did that)
-                // Unless audio failed (muted?), but we prioritize audio for counting
                 var title = root.TryGetProperty("title", out var titleProp) ? titleProp.GetString() : "FB-Messenger";
                 var body = root.TryGetProperty("body", out var bodyProp) ? bodyProp.GetString() : "";
-                
                 _lastKnownSender = title;
                 _lastNotifiedSpecificContent = body;
-                
-                // If we somehow missed the audio catch (e.g. muted), ensure we have at least 1 count
                 if (_internalMessageCounter == 0) _internalMessageCounter = 1;
-                
-                Dispatcher.Invoke(() =>
-                {
-                    // Refresh the notification bubble with specific text
-                    _trayIconService.ShowBalloonTip(title, body, _internalMessageCounter);
-                });
+                Dispatcher.Invoke(() => { _trayIconService.ShowBalloonTip(title, body, _internalMessageCounter); });
             }
             else if (messageType == "all_read")
             {
-                // All messages read - reset everything
-                _internalMessageCounter = 0;
-                _realUnreadCount = 0;
-                _confirmedUnreadCount = 0;
-                _lastNotifiedSpecificContent = "";
-                _lastSeenSpecificContent = "";
-                
-                Dispatcher.Invoke(() => StopFlashingUI());
+                if (_internalMessageCounter != 0)
+                {
+                    _internalMessageCounter = 0;
+                    _realUnreadCount = 0;
+                    _confirmedUnreadCount = 0;
+                    _lastNotifiedSpecificContent = "";
+                    _lastSeenSpecificContent = "";
+                    Dispatcher.Invoke(() => StopFlashingUI());
+                }
             }
         }
-        catch 
-        { 
-            // Ignore parsing errors 
-        }
+        catch { }
     }
 
     private void ShowNotification(string title, string body)
     {
         if (string.IsNullOrEmpty(title)) title = "FB-Messenger";
-
         Dispatcher.Invoke(() => 
         {
-            int badgeCount = _internalMessageCounter > 0 ? _internalMessageCounter : Math.Max(_realUnreadCount, _confirmedUnreadCount);
-            _trayIconService.ShowBalloonTip(title, body, badgeCount > 0 ? badgeCount : 1);
-            
-            // If window is hidden (tray only), show it minimized so taskbar flash is visible
+            int count = _internalMessageCounter > 0 ? _internalMessageCounter : Math.Max(_realUnreadCount, _confirmedUnreadCount);
+            _trayIconService.ShowBalloonTip(title, body, count > 0 ? count : 1);
             if (Visibility == Visibility.Hidden || Visibility == Visibility.Collapsed)
             {
                 Show();
                 WindowState = WindowState.Minimized;
             }
-            
             FlashTaskbar();
         });
     }
@@ -637,28 +613,107 @@ public partial class MainWindow : Window
     {
         MessageBox.Show(message, "Błąd", MessageBoxButton.OK, MessageBoxImage.Error);
     }
+    
+    private void FlashTaskbar()
+    {
+        var helper = new System.Windows.Interop.WindowInteropHelper(this);
+        FlashWindow.Flash(helper.Handle);
+    }
 
-    #region Menu Handlers
+    private void StopTaskbarFlash()
+    {
+        var helper = new System.Windows.Interop.WindowInteropHelper(this);
+        FlashWindow.StopFlash(helper.Handle);
+    }
 
-    private void About_Click(object sender, RoutedEventArgs e)
+    // Menu Handlers
+    private void Exit_Click(object sender, RoutedEventArgs e) { QuitApplication(); }
+    private void RetryConnection_Click(object sender, RoutedEventArgs e) { ErrorOverlay.Visibility = Visibility.Collapsed; Refresh(); }
+    private void Refresh_Click(object sender, RoutedEventArgs e) { Refresh(); }
+    private void DevTools_Click(object sender, RoutedEventArgs e) { ToggleDevTools(); }
+    private void About_Click(object sender, RoutedEventArgs e) 
     {
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version;
-        MessageBox.Show($"FB-Messenger\n\nWersja: {version}\nCreated by JaRoD-CENTER", 
-            "O programie", MessageBoxButton.OK, MessageBoxImage.Information);
+        MessageBox.Show($"FB-Messenger\n\nWersja: {version}\nCreated by JaRoD-CENTER", "O programie", MessageBoxButton.OK, MessageBoxImage.Information); 
     }
-
     private void Stats_Click(object sender, RoutedEventArgs e)
     {
-        var stats = UsageTracker.Instance.GetFormattedStats();
-        MessageBox.Show(stats, "Statystyki użycia", MessageBoxButton.OK, MessageBoxImage.Information);
+        var stats = "Statystyki niedostępne"; 
+        MessageBox.Show(stats, "Statystyki", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+    private void CheckUpdates_Click(object sender, RoutedEventArgs e) { CheckForUpdates(false); }
+    private void Feedback_Click(object sender, RoutedEventArgs e) 
+    { 
+        Process.Start(new ProcessStartInfo("https://github.com/Sebastian-Martis/AG-FB-Messenger/issues") { UseShellExecute = true }); 
     }
 
+    private void Refresh() { if (WebView.CoreWebView2 != null) WebView.CoreWebView2.Reload(); }
+    private void ToggleDevTools() { if (WebView.CoreWebView2 != null) WebView.CoreWebView2.OpenDevToolsWindow(); }
+    
+    public void ShowWindow()
+    {
+        _trayIconService.StopFlashing();
+        StopTaskbarFlash();
+        Show();
+        if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+        Activate();
+        Focus();
+        _windowActivatedTime = DateTime.Now;
+        _lastSeenSpecificContent = _lastNotifiedSpecificContent;
+    }
 
+    public void HideWindow() { Hide(); }
+    public void QuitApplication() 
+    { 
+        _isQuitting = true; 
+        Application.Current.Shutdown(); 
+    }
+    public async void ClearDataAndReload() 
+    { 
+        if (WebView.CoreWebView2 != null) 
+        { 
+            await WebView.CoreWebView2.Profile.ClearBrowsingDataAsync(); 
+            WebView.CoreWebView2.Reload(); 
+        } 
+    }
 
-    #region Win32 API - Flash Window
+    private void Window_Loaded(object sender, RoutedEventArgs e) { }
+    private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
+    {
+        if (!_isQuitting)
+        {
+            e.Cancel = true;
+            Hide();
+            if (!_wasMinimizedNotificationShown)
+            {
+                _trayIconService.ShowBalloonTip("FB-Messenger", "Aplikacja działa w tle. Kliknij ikonę w zasobniku aby otworzyć.");
+                _wasMinimizedNotificationShown = true;
+            }
+        }
+        else
+        {
+            _windowStateManager.SaveWindowState(this);
+            _trayIconService.Dispose();
+        }
+    }
+    private void Window_StateChanged(object sender, EventArgs e) { _windowStateManager.SaveWindowState(this); }
+    private void Window_SizeChanged(object sender, SizeChangedEventArgs e) { _windowStateManager.SaveWindowStateDebounced(this); }
+    private void Window_LocationChanged(object sender, EventArgs e) { _windowStateManager.SaveWindowStateDebounced(this); }
+}
 
+public class RelayCommand : ICommand
+{
+    private readonly Action<object?> _execute;
+    private readonly Func<object?, bool>? _canExecute;
+    public RelayCommand(Action<object?> execute, Func<object?, bool>? canExecute = null) { _execute = execute; _canExecute = canExecute; }
+    public bool CanExecute(object? parameter) => _canExecute?.Invoke(parameter) ?? true;
+    public void Execute(object? parameter) => _execute(parameter);
+    public event EventHandler? CanExecuteChanged;
+}
+
+public static class FlashWindow
+{
     [System.Runtime.InteropServices.DllImport("user32.dll")]
-    [return: System.Runtime.InteropServices.MarshalAs(System.Runtime.InteropServices.UnmanagedType.Bool)]
     private static extern bool FlashWindowEx(ref FLASHWINFO pwfi);
 
     [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
@@ -671,186 +726,29 @@ public partial class MainWindow : Window
         public uint dwTimeout;
     }
 
+    private const uint FLASHW_STOP = 0;
     private const uint FLASHW_ALL = 3;
     private const uint FLASHW_TIMERNOFG = 12;
 
-    private void FlashTaskbar()
+    public static void Flash(IntPtr hwnd)
     {
-        var interopHelper = new System.Windows.Interop.WindowInteropHelper(this);
-        var info = new FLASHWINFO
-        {
-            hwnd = interopHelper.Handle,
-            dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG,
-            uCount = uint.MaxValue,
-            dwTimeout = 0
-        };
-        info.cbSize = Convert.ToUInt32(System.Runtime.InteropServices.Marshal.SizeOf(info));
-        FlashWindowEx(ref info);
+        FLASHWINFO fInfo = new FLASHWINFO();
+        fInfo.cbSize = Convert.ToUInt32(System.Runtime.InteropServices.Marshal.SizeOf(fInfo));
+        fInfo.hwnd = hwnd;
+        fInfo.dwFlags = FLASHW_ALL | FLASHW_TIMERNOFG;
+        fInfo.uCount = uint.MaxValue;
+        fInfo.dwTimeout = 0;
+        FlashWindowEx(ref fInfo);
     }
 
-    private void StopTaskbarFlash()
+    public static void StopFlash(IntPtr hwnd)
     {
-        var interopHelper = new System.Windows.Interop.WindowInteropHelper(this);
-        var info = new FLASHWINFO
-        {
-            hwnd = interopHelper.Handle,
-            dwFlags = 0, // Stop flashing
-            uCount = 0,
-            dwTimeout = 0
-        };
-        info.cbSize = Convert.ToUInt32(System.Runtime.InteropServices.Marshal.SizeOf(info));
-        FlashWindowEx(ref info);
+        FLASHWINFO fInfo = new FLASHWINFO();
+        fInfo.cbSize = Convert.ToUInt32(System.Runtime.InteropServices.Marshal.SizeOf(fInfo));
+        fInfo.hwnd = hwnd;
+        fInfo.dwFlags = FLASHW_STOP;
+        fInfo.uCount = 0;
+        fInfo.dwTimeout = 0;
+        FlashWindowEx(ref fInfo);
     }
-
-    #endregion
-
-    private void CheckUpdates_Click(object sender, RoutedEventArgs e) => CheckForUpdates(silent: false);
-
-    private void Feedback_Click(object sender, RoutedEventArgs e)
-    {
-        Process.Start(new ProcessStartInfo("mailto:sebastian@jarod.center?subject=AG%20Messenger%20Feedback") 
-            { UseShellExecute = true });
-    }
-
-    private void Refresh_Click(object sender, RoutedEventArgs e) => Refresh();
-    
-    private void DevTools_Click(object sender, RoutedEventArgs e) => ToggleDevTools();
-
-    private void Exit_Click(object sender, RoutedEventArgs e)
-    {
-        _isQuitting = true;
-        UsageTracker.Instance.TrackSessionEnd();
-        Application.Current.Shutdown();
-    }
-
-    private void RetryConnection_Click(object sender, RoutedEventArgs e)
-    {
-        ErrorOverlay.Visibility = Visibility.Collapsed;
-        Refresh();
-    }
-
-    #endregion
-
-    #region Window Methods
-
-    private void Refresh()
-    {
-        if (WebView.CoreWebView2 != null)
-        {
-            WebView.CoreWebView2.Reload();
-        }
-    }
-
-    private void ToggleDevTools()
-    {
-        if (WebView.CoreWebView2 != null)
-        {
-            WebView.CoreWebView2.OpenDevToolsWindow();
-        }
-    }
-
-    public void ShowWindow()
-    {
-        _trayIconService.StopFlashing();
-        StopTaskbarFlash();
-        Show();
-        if (WindowState == WindowState.Minimized)
-            WindowState = WindowState.Normal;
-        Activate();
-        Focus();
-        
-        // Track when window was activated to prevent notification spam on open
-        _windowActivatedTime = DateTime.Now;
-        _lastSeenSpecificContent = _lastNotifiedSpecificContent;
-    }
-
-    public void HideWindow()
-    {
-        Hide();
-    }
-
-    public void QuitApplication()
-    {
-        _isQuitting = true;
-        UsageTracker.Instance.TrackSessionEnd();
-        Application.Current.Shutdown();
-    }
-
-    public async void ClearDataAndReload()
-    {
-        if (WebView.CoreWebView2 != null)
-        {
-            await WebView.CoreWebView2.Profile.ClearBrowsingDataAsync();
-            WebView.CoreWebView2.Reload();
-        }
-    }
-
-    #endregion
-
-    #region Window Events
-
-    private void Window_Loaded(object sender, RoutedEventArgs e)
-    {
-        // Tray icon is already created in constructor
-    }
-
-    private void Window_Closing(object sender, System.ComponentModel.CancelEventArgs e)
-    {
-        if (!_isQuitting)
-        {
-            // Minimize to tray instead of closing
-            e.Cancel = true;
-            Hide();
-
-            // Show notification (only once)
-            if (!_wasMinimizedNotificationShown)
-            {
-                _trayIconService.ShowBalloonTip("FB-Messenger", 
-                    "Aplikacja działa w tle. Kliknij ikonę w zasobniku aby otworzyć.");
-                _wasMinimizedNotificationShown = true;
-            }
-        }
-        else
-        {
-            // Actually closing - save state and cleanup
-            _windowStateManager.SaveWindowState(this);
-            _trayIconService.Dispose();
-        }
-    }
-
-    private void Window_StateChanged(object sender, EventArgs e)
-    {
-        _windowStateManager.SaveWindowState(this);
-    }
-
-    private void Window_SizeChanged(object sender, SizeChangedEventArgs e)
-    {
-        _windowStateManager.SaveWindowStateDebounced(this);
-    }
-
-    private void Window_LocationChanged(object sender, EventArgs e)
-    {
-        _windowStateManager.SaveWindowStateDebounced(this);
-    }
-
-    #endregion
-}
-
-/// <summary>
-/// Simple relay command for keyboard shortcuts
-/// </summary>
-public class RelayCommand : ICommand
-{
-    private readonly Action<object?> _execute;
-    private readonly Func<object?, bool>? _canExecute;
-
-    public RelayCommand(Action<object?> execute, Func<object?, bool>? canExecute = null)
-    {
-        _execute = execute;
-        _canExecute = canExecute;
-    }
-
-    public bool CanExecute(object? parameter) => _canExecute?.Invoke(parameter) ?? true;
-    public void Execute(object? parameter) => _execute(parameter);
-    public event EventHandler? CanExecuteChanged;
 }

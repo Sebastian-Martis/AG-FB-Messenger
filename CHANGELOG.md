@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.29] - 2026-01-16
+### Fixed
+- **Max-Count Strategy:** Implemented a new counting logic that simultaneously checks the Global Badge, Document Title (`(N)`), and internal conversation lists. The app now uses the **HIGHEST** number found among these sources. This ensures that even if one indicator fails (e.g., Badge says "1"), the correct count from another source (e.g., Title says "(4)") will be respected and displayed in the tray.
+
+## [2.0.28] - 2026-01-16
+### Fixed
+- **Accurate Burst Counting:** The app now reads the "Global Message Badge" (the red number on the Chats icon) as the definitive source of truth. This correctly counts 5 separate messages from 1 person as "5", whereas previous versions counted them as "1 conversation".
+- **Badge Reset Reliability:** Opening the app via the Taskbar now forcefully clears the red notification badge on the tray icon, fixing an issue where it would stay stuck until the tray icon was clicked.
+- **Improved Counting Fallback:** If the global badge is missing, the app now intelligently sums up all numbers found in the "unread" labels of your conversation list.
+
+## [2.0.27] - 2026-01-16
+### Fixed
+- **ARIA/Accessibility Integration:** Added a DOM crawler that scans `aria-label` attributes every 2 seconds. This serves as the "source of truth" for unread messages, bypassing visual/audio limitations of the Messenger web interface. 
+- **Burst Message Fix:** The app now correctly identifies "burst" messages (multiple messages from the same sender) by reading the true unread count exposed to screen readers.
+
+## [2.0.26] - 2026-01-16
+### Fixed
+- **Web Audio API Hook:** Added interception for `AudioBufferSourceNode` (Web Audio API) used by modern applications for sound effects. This runs alongside the HTML5 Audio hook to capture ALL methods of sound generation.
+- **Debounce:** Added sophisticated 200ms debounce to prevent double counting if multiple audio APIs are triggered simultaneously.
+
 ## [2.0.25] - 2026-01-16
 ### Fixed
 - **Audio-trigged Notifications:** Major fix using Audio API interception to count messages. Even if Messenger doesn't update the title (same sender messages), audio "dings" will now trigger notifications and badge updates reliably.

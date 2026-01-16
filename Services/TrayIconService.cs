@@ -151,6 +151,24 @@ public class TrayIconService : IDisposable
         _showingBadge = true;
     }
 
+    public void UpdateBadge(int count)
+    {
+        if (count == 0)
+        {
+            StopFlashing();
+            return;
+        }
+
+        _badgeIcon = CreateBadgeIcon(count);
+        
+        // If flashing, just update the icon resource so next tick picks it up
+        // If not flashing, set it immediately (static badge)
+        if (_flashTimer == null)
+        {
+             _trayIcon.Icon = _badgeIcon;
+        }
+    }
+
     private System.Drawing.Icon CreateBadgeIcon(int count)
     {
         // Create a 16x16 bitmap with the count number

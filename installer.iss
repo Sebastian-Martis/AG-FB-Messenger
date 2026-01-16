@@ -2,7 +2,7 @@
 ; Compile with Inno Setup 6.x: https://jrsoftware.org/isinfo.php
 
 #define MyAppName "FB-Messenger"
-#define MyAppVersion "2.0.25"
+#define MyAppVersion "2.0.29"
 #define MyAppPublisher "JaRoD-CENTER"
 #define MyAppURL "https://jarod.center"
 #define MyAppExeName "FB-Messenger.exe"
