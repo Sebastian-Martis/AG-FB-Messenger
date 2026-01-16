@@ -2,7 +2,7 @@
 ; Compile with Inno Setup 6.x: https://jrsoftware.org/isinfo.php
 
 #define MyAppName "FB-Messenger"
-#define MyAppVersion "2.0.13"
+#define MyAppVersion "2.0.25"
 #define MyAppPublisher "JaRoD-CENTER"
 #define MyAppURL "https://jarod.center"
 #define MyAppExeName "FB-Messenger.exe"
@@ -52,4 +52,4 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Name: "{userstartup}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: startupicon
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall runasoriginaluser

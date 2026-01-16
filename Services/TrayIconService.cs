@@ -76,9 +76,12 @@ public class TrayIconService : IDisposable
 
         menu.Items.Add(new Separator());
 
-        var testNotifyItem = new MenuItem { Header = "Test powiadomienia" };
-        testNotifyItem.Click += (s, e) => ShowBalloonTip("Test", "To jest powiadomienie testowe!");
-        menu.Items.Add(testNotifyItem);
+        var updateItem = new MenuItem { Header = "Sprawdź aktualizacje" };
+        updateItem.Click += (s, e) => 
+        {
+            _mainWindow.CheckForUpdates(false);
+        };
+        menu.Items.Add(updateItem);
 
         menu.Items.Add(new Separator());
 
@@ -99,41 +102,82 @@ public class TrayIconService : IDisposable
         _mainWindow.ShowWindow();
     }
 
-    public void ShowBalloonTip(string title, string message)
+    public void ShowBalloonTip(string title, string message, int unreadCount = 1)
     {
         _trayIcon.ShowBalloonTip(title, message, BalloonIcon.Info);
         
-        // Flash icon to indicate unread message
-        FlashIcon();
+        // Flash icon with badge showing unread count
+        FlashIcon(unreadCount);
     }
 
     private System.Windows.Threading.DispatcherTimer? _flashTimer;
-    private bool _isIconTransparent = false;
+    private bool _showingBadge = false;
     private System.Drawing.Icon? _originalIcon;
+    private System.Drawing.Icon? _badgeIcon;
+    private int _currentUnreadCount = 0;
 
-    private void FlashIcon()
+    public void FlashIcon(int unreadCount)
     {
-        if (_flashTimer != null) return; // Already flashing
+        _currentUnreadCount = unreadCount;
+        
+        // Generate badge icon with number
+        _badgeIcon = CreateBadgeIcon(unreadCount);
+        
+        if (_flashTimer != null)
+        {
+            // Already flashing, just update the badge
+            return;
+        }
 
         _originalIcon = _trayIcon.Icon; // Store original
         _flashTimer = new System.Windows.Threading.DispatcherTimer();
-        _flashTimer.Interval = TimeSpan.FromMilliseconds(500);
+        _flashTimer.Interval = TimeSpan.FromMilliseconds(600);
         _flashTimer.Tick += (s, e) =>
         {
-            if (_isIconTransparent)
+            if (_showingBadge)
             {
                 _trayIcon.Icon = _originalIcon;
             }
             else
             {
-                // Set to generic application icon or transparent if possible, 
-                // but System.Drawing.Icon doesn't support full transparency easily without empty ico.
-                // Switching to a standard "Warning" icon as "flash" state
-                _trayIcon.Icon = System.Drawing.SystemIcons.Warning;
+                _trayIcon.Icon = _badgeIcon ?? _originalIcon;
             }
-            _isIconTransparent = !_isIconTransparent;
+            _showingBadge = !_showingBadge;
         };
         _flashTimer.Start();
+        
+        // Show badge immediately
+        _trayIcon.Icon = _badgeIcon ?? _originalIcon;
+        _showingBadge = true;
+    }
+
+    private System.Drawing.Icon CreateBadgeIcon(int count)
+    {
+        // Create a 16x16 bitmap with the count number
+        int size = 16;
+        using var bitmap = new System.Drawing.Bitmap(size, size);
+        using var graphics = System.Drawing.Graphics.FromImage(bitmap);
+        
+        // Background - red circle
+        graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+        graphics.Clear(System.Drawing.Color.Transparent);
+        
+        using var bgBrush = new System.Drawing.SolidBrush(System.Drawing.Color.FromArgb(220, 53, 69)); // Bootstrap danger red
+        graphics.FillEllipse(bgBrush, 0, 0, size - 1, size - 1);
+        
+        // Text - white number
+        string text = count > 9 ? "9+" : count.ToString();
+        using var font = new System.Drawing.Font("Segoe UI", count > 9 ? 6f : 8f, System.Drawing.FontStyle.Bold);
+        using var textBrush = new System.Drawing.SolidBrush(System.Drawing.Color.White);
+        
+        var textSize = graphics.MeasureString(text, font);
+        float x = (size - textSize.Width) / 2;
+        float y = (size - textSize.Height) / 2;
+        graphics.DrawString(text, font, textBrush, x, y);
+        
+        // Convert to icon
+        IntPtr hIcon = bitmap.GetHicon();
+        return System.Drawing.Icon.FromHandle(hIcon);
     }
 
     public void StopFlashing()
@@ -143,7 +187,9 @@ public class TrayIconService : IDisposable
             _flashTimer.Stop();
             _flashTimer = null;
             if (_originalIcon != null) _trayIcon.Icon = _originalIcon;
-            _isIconTransparent = false;
+            _showingBadge = false;
+            _badgeIcon = null;
+            _currentUnreadCount = 0;
         }
     }
 

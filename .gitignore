@@ -151,3 +151,6 @@ logs/
 
 # VS Code
 .vscode/
+scripts/
+
+installer/*.exe

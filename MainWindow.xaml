@@ -28,7 +28,8 @@
         <!-- Menu Bar -->
         <Menu Grid.Row="0" Background="#f5f5f5">
             <MenuItem Header="JaRoD-CENTER" Style="{StaticResource MenuItemStyle}">
-                <MenuItem Header="O firmie" Click="About_Click"/>
+                <MenuItem Header="O aplikacji" Click="About_Click"/>
+                <MenuItem Header="📥 Sprawdź aktualizacje" Click="CheckUpdates_Click"/>
                 <MenuItem Header="📊 Statystyki użycia" Click="Stats_Click"/>
                 <MenuItem Header="💬 Wyślij opinię / Zgłoś błąd" Click="Feedback_Click"/>
                 <Separator/>

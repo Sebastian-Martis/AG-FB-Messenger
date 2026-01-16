@@ -5,6 +5,69 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [2.0.25] - 2026-01-16
+### Fixed
+- **Audio-trigged Notifications:** Major fix using Audio API interception to count messages. Even if Messenger doesn't update the title (same sender messages), audio "dings" will now trigger notifications and badge updates reliably.
+- **Focus Reset:** Message counters now reset immediately when window gains focus.
+
+## [2.0.24] - 2026-01-16
+### Fixed
+- **Auto-Update Loop:** Fixed app not starting automatically after update installation.
+- **Periodic Checks:** Added automatic update check every 1 hour (previously only on startup).
+
+## [2.0.23] - 2026-01-16
+### Fixed
+- **Aggressive Message Detection:** Replaced slow DOM monitoring with 500ms title polling that detects EVERY content change.
+- **JS-side Counter:** Message counter now runs in JavaScript for better accuracy and synchronization.
+
+## [2.0.22] - 2026-01-16
+### Fixed
+- **Accurate Message Count:** Added internal message counter that increments on each new message, providing accurate badge count regardless of Messenger's title behavior.
+
+## [2.0.21] - 2026-01-16
+### Fixed
+- **Auto-Update:** Fixed "Value cannot be null (Parameter 'window')" error when checking for updates before MainWindow loads.
+
+## [2.0.20] - 2026-01-16
+### Added
+- **Real Unread Count:** Added JavaScript DOM monitoring to track actual unread message count, not just conversation count from title.
+- **Accurate Badge:** Tray icon badge now shows the higher of DOM-detected count or title-based count for better accuracy.
+
+## [2.0.19] - 2026-01-16
+### Fixed
+- **Auto-Update:** Switched update server domain from `.center` to `.pl` to fix SSL certificate mismatch errors.
+- **Auto-Update:** Fixed issue where checking for updates from Tray menu did nothing (added thread safety and owner window to dialogs).
+
+## [2.0.18] - 2026-01-16
+### Added
+- **Badge Icon:** Tray icon now shows unread message count as a red badge with number (instead of warning icon).
+- **Dynamic Badge:** Badge updates in real-time as unread count changes.
+
+## [2.0.17] - 2026-01-16
+### Changed
+- **UI:** Renamed "O firmie" to "O aplikacji" in main menu.
+- **UI:** Added "Sprawdź aktualizacje" direct menu option in JaRoD-CENTER menu.
+
+## [2.0.16] - 2026-01-16
+### Added
+- **Auto-Update System:** Application now automatically checks for updates on startup.
+- **Update Checker:** Added "Sprawdź aktualizacje" menu item in System Tray.
+- **UpdateService:** Implemented mechanism to fetch `version.json`, download installer, and upgrade automatically.
+
+## [2.0.15] - 2026-01-16
+### Fixed
+- **Complete Notification Logic Rewrite:** Fixed issue where consecutive messages from same sender didn't trigger notifications. Now uses content-based detection instead of relying only on unread count (Messenger doesn't increment count for same conversation).
+- **Sender in Notifications:** Notifications now always show sender name when available.
+- **Removed:** "Test powiadomienia" option from tray menu.
+
+## [2.0.14] - 2026-01-16
+### Fixed
+- **Notification Reliability:** Fixed issue where second message from a sender was not triggering notification if the app was opened (but conversation not entered). Now correctly distinguishes between "seen" count and "confirmed" count.
+- **Sender in Notifications:** Notifications now display the sender's name when available, instead of just "Nowa wiadomość" (New Message).
+- **Faster Notification Response:** Reduced protection window for specific notifications from 5s to 3s.
+
 ## [2.0.13] - 2026-01-15
 ### Fixed
 - **Notification Spam:** Fixed a regression where a single message could trigger dozens of notifications. This was caused by the application reacting too quickly to "title flickering" (where Messenger briefly reports 0 unread messages during updates). The "Read Detection" is now buffered by 2 seconds to ignore these glitches.
